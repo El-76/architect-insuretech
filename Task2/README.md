@@ -223,15 +223,6 @@ minikube kubectl -- get --raw   "/apis/custom.metrics.k8s.io/v1beta1/namespaces/
 minikube kubectl -- apply -f hpa-rps.yaml
 ```
 
-Проверяем:
-
-```
-minikube kubectl -- get hpa -n scaletestapp
-
-NAME           REFERENCE                 TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
-scaletestapp   Deployment/scaletestapp   0/50      1         10        1          72m
-```
-
 Перезапустим приложение, чтобы освободилась память:
 
 ```
@@ -254,6 +245,15 @@ scaletestapp-7bd86fdd55-wvbvv   1/1     Running   0          33m
 ```
 
 ![dashboard](./05.png)
+
+Проверяем hpa:
+
+```
+minikube kubectl -- get hpa -n scaletestapp
+
+NAME           REFERENCE                 TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+scaletestapp   Deployment/scaletestapp   0/50      1         10        1          72m
+```
 
 Делаем Prometheus доступным с хоста:
 
