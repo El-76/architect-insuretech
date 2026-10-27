@@ -1,51 +1,175 @@
+## Тестирование горизонтального масштабирования
+
+### Подготовка
+
+Очищаем окружение:
+
+```
 minikube delete
+```
 
+Запускаем minikube с дополнениями и нужными конфигурационными параметрами:
+
+```
 minikube start --addons=metrics-server --extra-config=controller-manager.horizontal-pod-autoscaler-sync-period=5s
+```
 
-minikube kubectl -- get deployment metrics-server -n kube-system
+Меняем разрешение метрик у metrics-server:
 
+```
 minikube kubectl -- patch deployment metrics-server -n kube-system \
   --type=json \
   -p='[{"op":"replace","path":"/spec/template/spec/containers/0/args/4","value":"--metric-resolution=12s"}]'
+```
 
+Создаём пространство имён:
+
+```
 minikube kubectl -- create namespace scaletestapp
+```
 
+Запускаем приложение:
+
+```
 minikube kubectl -- apply -f deployment.yaml
+```
 
+Проверяем:
+
+```
 minikube kubectl -- get pods -n scaletestapp
 
 NAME                            READY   STATUS    RESTARTS   AGE
-scaletestapp-67945c59fb-lqsdj   1/1     Running   0          28s
+scaletestapp-5d6cd674cd-rc6zx   1/1     Running   0          22s
+```
 
+Настраиваем сервис приложения:
+
+```
 minikube kubectl -- apply -f service.yaml
+```
 
+Проверяем:
+
+```
 minikube kubectl -- get services -n scaletestapp
 
-NAME           TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
-scaletestapp   ClusterIP   10.106.74.228   <none>        8080/TCP   24s
+NAME           TYPE       CLUSTER-IP    EXTERNAL-IP   PORT(S)          AGE
+scaletestapp   NodePort   10.96.85.47   <none>        8080:31080/TCP   20s
+```
 
+### Масштабирование по используемой памяти
+
+Применяем конфигурацию HPA с масштабированием по памяти:
+
+```
 minikube kubectl -- apply -f hpa-memory.yaml
+```
 
+Проверяем:
+
+```
 minikube kubectl -- get hpa -n scaletestapp
 
-NAME              REFERENCE                 TARGETS          MINPODS   MAXPODS   REPLICAS   AGE
-scaletestapphpa   Deployment/scaletestapp   memory: 8%/80%   1         10        1          59s
+NAME           REFERENCE                 TARGETS          MINPODS   MAXPODS   REPLICAS   AGE
+scaletestapp   Deployment/scaletestapp   memory: 8%/80%   1         10        1          21s
+```
 
-# minikube kubectl -- apply -f locust.yaml
+Делаем приложение доступным на хост-машине, чтобы подавать на неё нагрузку, используя locust:
 
-# minikube kubectl -- port-forward --address 0.0.0.0 -n locust service/locust-master 8089:8089
-
+```
 minikube kubectl -- port-forward -n scaletestapp --address 127.0.0.1 svc/scaletestapp 31080:8080
 
+Forwarding from 127.0.0.1:31080 -> 8080
+```
+
+**В новом окне**
+
+Проверяем:
+
+```
+curl http://127.0.0.1:31080
+
+Идентификатор пода: scaletestapp-5d6cd674cd-rc6zx
+```
+
+Запускаем minikube dashboard:
+
+```
 minikube dashboard --port=18080 --url
 
+* Enabling dashboard ...
+  - Using image docker.io/kubernetesui/dashboard:v2.7.0
+  - Using image docker.io/kubernetesui/metrics-scraper:v1.0.8
+* Some dashboard features require the metrics-server addon. To enable all features please run:
+
+        minikube addons enable metrics-server
+
+* Verifying dashboard health ...
+* Launching proxy ...
+* Verifying proxy health ...
+http://127.0.0.1:18080/api/v1/namespaces/kubernetes-dashboard/services/http:kubernetes-dashboard:/proxy/
+```
+
+**В новом окне**
+
+Запускаем locust:
+
+```
 locust
 
-http://192.168.56.106:8089/
+[2026-10-27 21:24:37,093] debian/INFO/locust.main: Starting Locust 2.46.7
+[2026-10-27 21:24:37,095] debian/INFO/locust.main: Starting web interface at http://0.0.0.0:8089, press enter to open your default browser.
+```
 
-5000
+Смотрим в dashboard на количество подов - 1 под:
 
-5
+![dashboard](./01.png)
+
+**В новом окне**
+
+Ещё раз проверяем количество подов (на этот раз из командной строки):
+
+```
+minikube kubectl -- get pods -n scaletestapp
+
+NAME                            READY   STATUS    RESTARTS   AGE
+scaletestapp-5d6cd674cd-rc6zx   1/1     Running   0          16m
+```
+
+Заходим в locuat, ставим Number of users = 5000, Ramp up = 5:
+
+![locust](./02.png)
+
+Запускаем тест - нажимаем START и ждём:
+
+![test](./03.png)
+
+Через какое-то время проверяем hpa:
+
+```
+minikube kubectl -- get hpa -n scaletestapp
+
+NAME           REFERENCE                 TARGETS           MINPODS   MAXPODS   REPLICAS   AGE
+scaletestapp   Deployment/scaletestapp   memory: 93%/80%   1         10        2          21m
+```
+
+И количество подов в командной строке и в браузере:
+
+```
+minikube kubectl -- get pods -n scaletestapp
+
+NAME                            READY   STATUS    RESTARTS   AGE
+scaletestapp-5d6cd674cd-6mc5d   1/1     Running   0          16s
+scaletestapp-5d6cd674cd-rc6zx   1/1     Running   0          24m
+```
+
+![test](./04.png)
+
+Видно, что количество подов увеличилось.
+
+
+### Масштабирование по кастомной метрике (rps)
 
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
