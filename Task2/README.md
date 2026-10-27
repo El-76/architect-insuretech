@@ -164,21 +164,37 @@ scaletestapp-5d6cd674cd-6mc5d   1/1     Running   0          16s
 scaletestapp-5d6cd674cd-rc6zx   1/1     Running   0          24m
 ```
 
-![test](./04.png)
+![dashboard](./04.png)
 
 Видно, что количество подов увеличилось.
 
+Останавливаем тест в locust - жмём STOP.
 
 ### Масштабирование по кастомной метрике (rps)
 
+Установим Prometheus:
+
+```
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
 helm install prometheus-operator prometheus-community/kube-prometheus-stack
+```
 
+Применим конфигурацию Prometheus:
+
+```
 minikube kubectl -- apply -f monitor.yaml
+```
 
+Установим Prometheus Adapter с конфигурацией:
+
+```
 helm install prometheus-adapter prometheus-community/prometheus-adapter -f adapter-values.yaml
+```
 
+Ждём продолжительное время и проверяем, что метрика доступна:
+
+```
 minikube kubectl -- get --raw   "/apis/custom.metrics.k8s.io/v1beta1/namespaces/scaletestapp/pods/*/http_requests_per_second" | jq .
 {
   "kind": "MetricValueList",
@@ -189,19 +205,103 @@ minikube kubectl -- get --raw   "/apis/custom.metrics.k8s.io/v1beta1/namespaces/
       "describedObject": {
         "kind": "Pod",
         "namespace": "scaletestapp",
-        "name": "scaletestapp-5d6cd674cd-2hxmf",
+        "name": "scaletestapp-7bd86fdd55-wvbvv",
         "apiVersion": "/v1"
       },
       "metricName": "http_requests_per_second",
-      "timestamp": "2026-10-21T20:53:10Z",
+      "timestamp": "2026-10-27T19:24:44Z",
       "value": "0",
       "selector": null
     }
   ]
 }
+```
 
+Применим конфигурацию hpa по rps:
+
+```
+minikube kubectl -- apply -f hpa-rps.yaml
+```
+
+Проверяем:
+
+```
+minikube kubectl -- get hpa -n scaletestapp
+
+NAME           REFERENCE                 TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+scaletestapp   Deployment/scaletestapp   0/50      1         10        1          72m
+```
+
+Перезапустим приложение, чтобы освободилась память:
+
+```
+minikube kubectl -- rollout restart deployment/scaletestapp -n scaletestapp
+```
+
+Вернём количество реплик:
+
+```
+minikube kubectl -- scale deployment/scaletestapp --replicas=1 -n scaletestapp
+```
+
+Проверим в командной строке и в dashboard:
+
+```
+minikube kubectl -- get pods -n scaletestapp                                  
+
+NAME                            READY   STATUS    RESTARTS   AGE
+scaletestapp-7bd86fdd55-wvbvv   1/1     Running   0          33m
+```
+
+![dashboard](./05.png)
+
+Делаем Prometheus доступным с хоста:
+
+```
 minikube kubectl -- port-forward --address 0.0.0.0 svc/prometheus-operator-kube-p-prometheus 9090:9090
 
-minikube kubectl -- apply -f hpa-rps.yaml
+Forwarding from 0.0.0.0:9090 -> 9090
+```
 
+Заходим в Prometheus, вводим запрос:
+
+```
+http_requests_total{namespace!="",pod!=""}
+```
+
+\- видим, что запросов 0, но метрика доступна:
+
+![Prometheus](./06.png)
+
+Заходим в locust, запускаем тест заново и ждём:
+
+![test](./07.png)
+
+Опять смотрим в Prometheus - запросы появились:
+
+![Prometheus](./08.png)
+
+Через какое-то время проверяем hpa:
+
+```
 minikube kubectl -- get hpa -n scaletestapp
+
+NAME           REFERENCE                 TARGETS     MINPODS   MAXPODS   REPLICAS   AGE
+scaletestapp   Deployment/scaletestapp   72747m/50   1         10        2          95m
+```
+
+И количество подов в командной строке и в браузере:
+
+```
+minikube kubectl -- get pods -n scaletestapp
+
+NAME                            READY   STATUS    RESTARTS   AGE
+scaletestapp-7bd86fdd55-wvbvv   1/1     Running   0          63m
+scaletestapp-7bd86fdd55-xprdr   1/1     Running   0          4m42s
+```
+
+![dashboard](./09.png)
+
+Видно, что количество подов увеличилось.
+
+Останавливаем тест в locust - жмём STOP.
